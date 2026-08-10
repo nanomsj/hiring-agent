@@ -42,7 +42,8 @@ class TemplateManager:
             "projects": "projects.jinja",
             "awards": "awards.jinja",
             "system_message": "system_message.jinja",
-            "github_project_selection": "github_project_selection.jinja",
+            "all_sections": "all_sections.jinja",
+            "full_system_message": "full_system_message.jinja",
         }
 
         for section_name, filename in template_files.items():

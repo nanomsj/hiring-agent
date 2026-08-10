@@ -7,5 +7,5 @@ Centralizing prompts here makes them easier to maintain and update.
 
 from config import DEFAULT_MODEL, MODEL_PARAMETERS
 
-# Re-exported for consumers (score.py, evaluator.py, pdf.py, github.py).
+# Re-exported for consumers (score.py, evaluator.py, pdf.py).
 __all__ = ["DEFAULT_MODEL", "MODEL_PARAMETERS"]

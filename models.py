@@ -259,25 +259,6 @@ def build_evaluation_model(role) -> Type[BaseModel]:
     )
 
 
-class GitHubProfile(BaseModel):
-    """Pydantic model for GitHub profile data."""
-
-    username: str
-    name: Optional[str] = None
-    bio: Optional[str] = None
-    location: Optional[str] = None
-    company: Optional[str] = None
-    public_repos: Optional[int] = None
-    followers: Optional[int] = None
-    following: Optional[int] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    avatar_url: Optional[str] = None
-    blog: Optional[str] = None
-    twitter_username: Optional[str] = None
-    hireable: Optional[bool] = None
-
-
 class OpenAICompatibleProvider:
     """Generic OpenAI-chat-compatible LLM provider.
 

@@ -70,15 +70,16 @@ class ResumeEvaluator:
             # Add format parameter for structured output
             kwargs = {"format": self.evaluation_model.model_json_schema()}
             # Use the appropriate provider to make the API call
+            print("   🔄 正在评估打分（通常约 1 分钟）...")
             response = self.provider.chat(**chat_params, **kwargs)
 
             response_text = response["message"]["content"]
             response_text = extract_json_from_response(response_text)
-            logger.error(f"🔤 Prompt response: {response_text}")
 
             evaluation_dict = json.loads(response_text)
             evaluation_data = self.evaluation_model(**evaluation_dict)
 
+            print("   ✅ 评估打分完成")
             return evaluation_data
 
         except Exception as e:

@@ -55,7 +55,6 @@ Thanks for your interest in improving this project. Contributions are welcome, i
 
   * PDF to Markdown
   * Section extraction to JSON Resume
-  * GitHub enrichment on a known username
   * Evaluation to JSON with the required fields
 
 

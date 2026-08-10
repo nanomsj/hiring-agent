@@ -2,6 +2,50 @@ from typing import Dict, List, Optional
 import pdb
 from models import JSONResume
 
+# Chinese labels for the shipped role's scoring categories. Used to build
+# Chinese CSV column headers; unknown categories fall back to their label.
+CATEGORY_CN = {
+    "Open Source": "开源贡献",
+    "Self Projects": "个人项目",
+    "Production Experience": "生产经验",
+    "Technical Skills": "技术技能",
+}
+
+# Chinese translation for the fixed CSV column headers.
+CSV_HEADER_CN = {
+    "file_name": "文件名",
+    "name": "姓名",
+    "email": "邮箱",
+    "phone": "电话",
+    "location": "所在地",
+    "summary": "个人简介",
+    "linkedin_url": "领英链接",
+    "linkedin_username": "领英用户名",
+    "twitter_url": "推特链接",
+    "twitter_username": "推特用户名",
+    "dev_url": "DEV社区链接",
+    "dev_username": "DEV社区用户名",
+    "behance_url": "Behance链接",
+    "behance_username": "Behance用户名",
+    "total_work_experience": "工作经历数",
+    "current_position": "当前职位",
+    "current_company": "当前公司",
+    "total_education": "教育经历数",
+    "highest_degree": "最高学历",
+    "institution": "学校",
+    "total_skills": "技能数",
+    "skills_list": "技能列表",
+    "total_projects": "项目数",
+    "total_score": "总分",
+    "total_max": "满分",
+    "bonus_points": "加分",
+    "bonus_breakdown": "加分说明",
+    "deductions": "扣分",
+    "deduction_reasons": "扣分原因",
+    "key_strengths": "核心优势",
+    "areas_for_improvement": "待改进",
+}
+
 
 def transform_parsed_data(parsed_data: Dict) -> Dict:
     try:
@@ -495,14 +539,13 @@ def fetch_profile(profiles, network_names, prefix):
 
 
 def transform_evaluation_response(
-    file_name=None, resume_data=None, github_data=None, evaluation=None, role=None
+    file_name=None, resume_data=None, evaluation=None, role=None
 ):
     """
-    Transform the three inputs (resume_data, github_data, evaluation) into the most important columns as a CSV row.
+    Transform the inputs (resume_data, evaluation) into the most important columns as a CSV row.
 
     Args:
         resume_data: JSONResume object containing parsed resume data
-        github_data: dict containing GitHub profile data
         evaluation: EvaluationData object containing evaluation results
 
     Returns:
@@ -528,7 +571,6 @@ def transform_evaluation_response(
         # Extract all profile information
         if basics.profiles:
             # Extract profiles for each platform
-            github_profile = fetch_profile(basics.profiles, ["github"], "github")
             linkedin_profile = fetch_profile(basics.profiles, ["linkedin"], "linkedin")
             twitter_profile = fetch_profile(
                 basics.profiles, ["twitter", "x"], "twitter"
@@ -537,16 +579,6 @@ def transform_evaluation_response(
                 basics.profiles, ["dev community", "dev"], "dev"
             )
             behance_profile = fetch_profile(basics.profiles, ["behance"], "behance")
-
-            # Add GitHub profile columns
-            if github_profile:
-                csv_row["github_url"] = github_profile.url
-                csv_row["github_username"] = (
-                    github_profile.username if github_profile.username else ""
-                )
-            else:
-                csv_row["github_url"] = ""
-                csv_row["github_username"] = ""
 
             # Add LinkedIn profile columns
             if linkedin_profile:
@@ -589,7 +621,7 @@ def transform_evaluation_response(
                 csv_row["behance_username"] = ""
         else:
             # Initialize empty profile columns
-            for prefix in ["github", "linkedin", "twitter", "dev", "behance"]:
+            for prefix in ["linkedin", "twitter", "dev", "behance"]:
                 csv_row[f"{prefix}_url"] = ""
                 csv_row[f"{prefix}_username"] = ""
 
@@ -655,21 +687,6 @@ def transform_evaluation_response(
     else:
         csv_row["total_projects"] = 0
 
-    # Extract GitHub data
-    if github_data:
-        profile = github_data.get("profile", {})
-        csv_row["github_repos"] = profile.get("public_repos", 0)
-        csv_row["github_followers"] = profile.get("followers", 0)
-        csv_row["github_following"] = profile.get("following", 0)
-        csv_row["github_created_at"] = profile.get("created_at", "")
-        csv_row["github_bio"] = profile.get("bio", "")
-    else:
-        csv_row["github_repos"] = 0
-        csv_row["github_followers"] = 0
-        csv_row["github_following"] = 0
-        csv_row["github_created_at"] = ""
-        csv_row["github_bio"] = ""
-
     # Extract evaluation scores (one pair of columns per role category)
     category_keys = [c.key for c in role.categories] if role else []
     if evaluation and hasattr(evaluation, "scores"):
@@ -722,7 +739,23 @@ def transform_evaluation_response(
     else:
         csv_row["areas_for_improvement"] = ""
 
-    return csv_row
+    # Translate column headers to Chinese for a more usable CSV.
+    label_by_key = {
+        c.key: CATEGORY_CN.get(c.label, c.label) for c in (role.categories if role else [])
+    }
+    cn_row = {}
+    for key, value in csv_row.items():
+        if key in CSV_HEADER_CN:
+            cn_row[CSV_HEADER_CN[key]] = value
+        elif key.endswith("_score"):
+            base = key[: -len("_score")]
+            cn_row[f"{label_by_key.get(base, base)}得分"] = value
+        elif key.endswith("_max"):
+            base = key[: -len("_max")]
+            cn_row[f"{label_by_key.get(base, base)}满分"] = value
+        else:
+            cn_row[key] = value
+    return cn_row
 
 
 def convert_json_resume_to_text(resume_data: JSONResume) -> str:
@@ -871,38 +904,6 @@ def convert_json_resume_to_text(resume_data: JSONResume) -> str:
                     text_parts.append(f"    • {highlight}")
 
     return "\n".join(text_parts)
-
-
-def convert_github_data_to_text(github_data: dict) -> str:
-    github_text = "\n\n=== GITHUB DATA ===\n"
-
-    if "profile" in github_data:
-        profile = github_data["profile"]
-        github_text += f"GitHub Profile:\n"
-        github_text += f"- Username: {profile.get('username', 'N/A')}\n"
-        github_text += f"- Name: {profile.get('name', 'N/A')}\n"
-        github_text += f"- Bio: {profile.get('bio', 'N/A')}\n"
-        github_text += f"- Public Repositories: {profile.get('public_repos', 'N/A')}\n"
-        github_text += f"- Followers: {profile.get('followers', 'N/A')}\n"
-        github_text += f"- Following: {profile.get('following', 'N/A')}\n"
-        github_text += f"- Account Created: {profile.get('created_at', 'N/A')}\n"
-        github_text += f"- Last Updated: {profile.get('updated_at', 'N/A')}\n"
-
-    if "projects" in github_data:
-        projects = github_data["projects"]
-        github_text += f"\nGitHub Projects ({len(projects)} total):\n"
-        for i, project in enumerate(projects[:10], 1):
-            github_text += f"{i}. {project.get('name', 'N/A')}\n"
-            github_text += f"   Description: {project.get('description', 'N/A')}\n"
-            github_text += f"   URL: {project.get('github_url', 'N/A')}\n"
-            if "github_details" in project:
-                details = project["github_details"]
-                github_text += f"   Stars: {details.get('stars', 'N/A')}\n"
-                github_text += f"   Forks: {details.get('forks', 'N/A')}\n"
-                github_text += f"   Language: {details.get('language', 'N/A')}\n"
-            github_text += "\n"
-
-    return github_text
 
 
 def convert_blog_data_to_text(blog_data: dict) -> str:

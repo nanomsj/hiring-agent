@@ -1,6 +1,6 @@
 # Hiring Agent
 
-<p align="center"><strong>Resume-to-Score pipeline</strong> that extracts structured data from PDFs, enriches with GitHub signals, and outputs a fair, explainable evaluation.</p>
+<p align="center"><strong>Resume-to-Score pipeline</strong> that extracts structured data from PDFs and outputs a fair, explainable evaluation.</p>
 
 <p align="center">
   <a href="https://www.python.org/downloads/release/python-3110/">
@@ -84,7 +84,7 @@ Articles and discussions that have shaped how we think about improving this proj
 
 ## Overview
 
-Hiring Agent parses a resume PDF to Markdown, extracts sectioned JSON using a local or hosted LLM, augments the data with GitHub profile and repository signals, then produces an objective evaluation with category scores, evidence, bonus points, and deductions. You can run fully local with Ollama or use Google Gemini.
+Hiring Agent parses a resume PDF to Markdown, extracts sectioned JSON using a local or hosted LLM, then produces an objective evaluation with category scores, evidence, bonus points, and deductions. You can run fully local with Ollama or use Google Gemini.
 
 ---
 
@@ -97,10 +97,9 @@ Hiring Agent parses a resume PDF to Markdown, extracts sectioned JSON using a lo
 **Flow**
 
 1. `pymupdf_rag.py` converts PDF pages to Markdown-like text.
-2. `pdf.py` calls the LLM per section using Jinja templates under `prompts/templates`.
-3. `github.py` fetches profile and repos, classifies projects, and asks the LLM to select the top 7.
-4. `evaluator.py` runs a strict-scored evaluation with fairness constraints.
-5. `score.py` orchestrates everything end to end and writes CSV when development mode is on.
+2. `pdf.py` calls the LLM once to extract the whole resume into JSON using Jinja templates under `prompts/templates`.
+3. `evaluator.py` runs a strict-scored evaluation with fairness constraints.
+4. `score.py` orchestrates everything end to end and writes CSV when development mode is on.
 
 </td>
 <td>
@@ -188,7 +187,6 @@ $ cp .env.example .env
 | ---------------- | ------------------------------------------- | ---------------------------------------------------------------------- |
 | `DEFAULT_MODEL`  | for example `gemma4:latest` or `gemini-2.5-pro` | Model to use; must exist in `providers.json` — the provider is inferred from which provider lists it. Defaults to `default_model` in `providers.json`. |
 | `GEMINI_API_KEY` | string                                      | Required when using a Gemini model.                                   |
-| `GITHUB_TOKEN`   | optional                                    | Inherits from your shell environment, improves GitHub API rate limits. |
 
 Provider mapping lives in `providers.json` — each provider declares its `base_url`, an optional API-key env var, and per-model parameters; `config.py` loads it and resolves the provider for a model. `config.py` also has a flag:
 
@@ -212,24 +210,19 @@ You can leave it on during iteration. See the next section for details.
 </details>
 
 <details>
-<summary><b>2) Section parsing with templates</b></summary>
+<summary><b>2) Resume parsing into JSON (single pass)</b></summary>
 
-- `prompts/templates/*.jinja` define strict instructions for each section
-  Basics, Work, Education, Skills, Projects, Awards.
-- `pdf.PDFHandler` calls the LLM per section and assembles a `JSONResume` object (see `models.py`).
-
-</details>
-
-<details>
-<summary><b>3) GitHub enrichment</b></summary>
-
-- `github.py` extracts a username from the resume profiles, fetches profile and repos, and classifies each project.
-- It asks the LLM to select exactly 7 unique projects with a minimum author commit threshold, favoring meaningful contributions.
+- `prompts/templates/all_sections.jinja` asks the LLM to extract **all** sections
+  (basics, work, education, skills, projects, awards, certificates, …) in **one**
+  call, returning a single JSON Resume object.
+- `prompts/templates/full_system_message.jinja` sets the parser's system prompt.
+- `pdf.PDFHandler` renders these templates, makes a single LLM call, and builds the
+  `JSONResume` object (see `models.py`).
 
 </details>
 
 <details>
-<summary><b>4) Evaluation</b></summary>
+<summary><b>3) Evaluation</b></summary>
 
 - `evaluator.py` scores the resume against the **role** selected on the command line.
 - Each role lives in `roles/<role_name>/` and defines its own scoring categories and weights in `role.json`, plus its own `criteria.jinja` and `system_message.jinja` prompts (encoding fairness and scoring rules).
@@ -238,10 +231,17 @@ You can leave it on during iteration. See the next section for details.
 </details>
 
 <details>
-<summary><b>5) Output and CSV export</b></summary>
+<summary><b>4) Output and CSV export</b></summary>
 
-- `score.py` prints a readable summary to stdout.
-- When `DEVELOPMENT_MODE=True` it creates or appends a per-role `resume_evaluations_<role>.csv` with key fields (columns follow the role's categories), and caches intermediate JSON under `cache/`.
+- `score.py` prints a readable summary to stdout, with a one-line progress marker
+  at the start of each stage (PDF read, resume extraction, scoring, CSV write) so
+  the terminal shows the pipeline is still alive.
+- When `DEVELOPMENT_MODE=True` it creates or appends a per-role
+  `resume_evaluations_<role>.csv` with key fields (columns follow the role's
+  categories; headers are in Chinese and the file is UTF-8 with BOM so Excel
+  renders them correctly), and caches intermediate JSON under `cache/`.
+- When a folder of PDFs is processed, `score.py` also prints an overall summary
+  table after the batch run.
 
 </details>
 
@@ -261,8 +261,20 @@ $ python score.py ./resume/sample.pdf --role software_engineering_intern
 What happens:
 
 1. If development mode is on, the PDF extraction result is cached to `cache/resumecache_<basename>.json`.
-2. If a GitHub profile is found in the resume, repositories are fetched and cached to `cache/githubcache_<basename>.json`.
-3. The evaluator scores the resume against the selected role, prints a report and, in development mode, appends a CSV row to `resume_evaluations_<role>.csv`.
+2. The evaluator scores the resume against the selected role, prints a report and, in development mode, appends a CSV row to `resume_evaluations_<role>.csv`.
+
+### Batch scoring a folder
+
+Pass a **directory** instead of a single PDF and every `.pdf` inside it is scored
+in one run. After the last resume, an overall summary table is printed.
+
+```bash
+$ python score.py ./resumes/ --role software_engineering_intern
+```
+
+Each resume is processed individually (cache, evaluation, CSV append), and a
+progress marker (`3/12 …`) is printed before every file so you can tell how far
+along the batch is.
 
 ### Roles
 
@@ -300,7 +312,6 @@ role directory instead.
 ├── .python-version
 ├── config.py
 ├── evaluator.py
-├── github.py
 ├── llm_utils.py
 ├── models.py
 ├── pdf.py
@@ -308,10 +319,11 @@ role directory instead.
 ├── prompts/
 │   ├── template_manager.py
 │   └── templates/
+│       ├── all_sections.jinja
+│       ├── full_system_message.jinja
 │       ├── awards.jinja
 │       ├── basics.jinja
 │       ├── education.jinja
-│       ├── github_project_selection.jinja
 │       ├── projects.jinja
 │       ├── skills.jinja
 │       ├── system_message.jinja
