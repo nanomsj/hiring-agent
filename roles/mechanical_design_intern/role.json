@@ -1,0 +1,41 @@
+{
+  "position_title": "机械设计/CAD制图实习生",
+  "categories": [
+    {
+      "key": "technical_skills",
+      "label": "CAD/设计软件技能",
+      "max": 30,
+      "icon": "🛠️"
+    },
+    {
+      "key": "mechanical_design_knowledge",
+      "label": "机械设计与制图基础",
+      "max": 25,
+      "icon": "📐"
+    },
+    {
+      "key": "engineering_experience",
+      "label": "实际项目/工程经验",
+      "max": 20,
+      "icon": "📁"
+    },
+    {
+      "key": "education_background",
+      "label": "教育背景",
+      "max": 15,
+      "icon": "🎓"
+    },
+    {
+      "key": "manufacturability_awareness",
+      "label": "加工工艺与可制造性",
+      "max": 10,
+      "icon": "🔩"
+    }
+  ],
+  "bonus_max": 5,
+  "min_final_score": 0,
+  "max_final_score": 105,
+  "generated_from_jd_sha": "728fc4c529d5d44a075a504db7017428daf18e22eec59710edb268c0f874da13",
+  "rubric_version": 2,
+  "education_scoring_enabled": true
+}

@@ -22,11 +22,13 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8")
 
 import argparse
+import datetime
 
 from pdf import PDFHandler
 from models import JSONResume, build_evaluation_model
 from evaluator import ResumeEvaluator
 from roles import Role, load_role, list_available_roles, scaffold_role
+from jd_role import generate_role_from_jd
 from pathlib import Path
 from prompt import DEFAULT_MODEL, MODEL_PARAMETERS
 from transform import (
@@ -307,7 +309,7 @@ def main(pdf_path, role: Role):
         resume_data = pdf_handler.extract_json_from_pdf(pdf_path)
 
         if resume_data == None:
-            return None
+            return None, None
 
         if DEVELOPMENT_MODE:
             if is_valid_resume_data(resume_data):
@@ -339,6 +341,8 @@ def main(pdf_path, role: Role):
         summary["file_name"] = os.path.basename(pdf_path)
         summary["name"] = candidate_name
 
+    # Build the CSV row (written to the results file by run_scoring).
+    csv_row = None
     if DEVELOPMENT_MODE:
         csv_row = transform_evaluation_response(
             file_name=os.path.basename(pdf_path),
@@ -347,37 +351,91 @@ def main(pdf_path, role: Role):
             role=role,
         )
 
-        # Write CSV row to a role-specific file, since each role's columns differ.
-        # Use utf-8-sig so Excel displays Chinese headers correctly, and detect a
-        # stale header row (e.g. from an older English-header CSV) so DictWriter
-        # doesn't raise on mismatched fieldnames.
-        csv_path = f"resume_evaluations_{role.name}.csv"
-        fieldnames = list(csv_row.keys())
+    return summary, csv_row
 
-        headers_match = False
-        if os.path.exists(csv_path):
-            try:
-                with open(csv_path, encoding="utf-8-sig") as f:
-                    existing_header = next(csv.reader(f))
-                headers_match = existing_header == fieldnames
-            except Exception:
-                headers_match = False
 
-        mode = "a" if headers_match else "w"
-        with open(csv_path, mode, newline="", encoding="utf-8-sig") as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            if mode == "w":
-                writer.writeheader()
-            writer.writerow(csv_row)
-        print(f"   ✅ 结果已写入 CSV：{csv_path}")
+def save_results_csv(role, rows, output_dir=None) -> Path | None:
+    """Write all scoring rows to one timestamped CSV under the result directory.
 
-    return summary
+    The file is named ``<role>_<YYYYMMDD_HHMMSS>.csv``. The directory defaults to
+    the sibling of this project (``xingbodongli/results``) so results never clutter
+    the source tree, unless an explicit ``output_dir`` is given.
+    """
+    if not rows:
+        print("   ⚠️  没有可写的评分结果行，跳过 CSV 输出。")
+        return None
+
+    if output_dir:
+        out_dir = Path(output_dir)
+    else:
+        # Default: <project parent>/results  (sibling of hiring-agent/).
+        out_dir = Path(__file__).resolve().parent.parent / "results"
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_path = out_dir / f"{role.name}_{timestamp}.csv"
+
+    fieldnames = list(rows[0].keys())
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print("   ✅ 评分结果已保存：")
+    print(f"   {csv_path.resolve()}")
+    return csv_path
+
+
+def run_role_generation(args) -> None:
+    """`--jd` flow ONLY: build a role from a job description, print it, exit.
+
+    Never reads, scans or scores any resume.
+    """
+    generate_role_from_jd(args.jd, role_key=args.role_key, force=args.force)
+
+
+def run_scoring(args, role: Role) -> None:
+    """Score one PDF or a folder of PDFs against an EXISTING role.
+
+    This function never creates, modifies or overwrites any role — it only
+    loads the role passed in and scores resumes against it. All CSV rows are
+    collected and written once to a timestamped file in the result directory.
+    """
+
+    rows = []
+    summaries = []
+
+    # Batch mode: pdf_path is a directory — process every .pdf inside it.
+    if os.path.isdir(args.pdf_path):
+        pdf_files = sorted(Path(args.pdf_path).glob("*.pdf"))
+        if not pdf_files:
+            print(f"❌ 目录中没有 PDF 文件：{args.pdf_path}")
+            exit(1)
+        print(f"📂 找到 {len(pdf_files)} 份简历，开始批量处理...")
+        for i, pdf_file in enumerate(pdf_files, 1):
+            print(f"\n{'=' * 70}")
+            print(f"📄 进度（{i}/{len(pdf_files)}）：{pdf_file.name}")
+            summary, csv_row = main(str(pdf_file), role)
+            if summary:
+                summaries.append(summary)
+            if csv_row:
+                rows.append(csv_row)
+        print_summary_table(summaries, role)
+    else:
+        summary, csv_row = main(args.pdf_path, role)
+        if summary:
+            summaries.append(summary)
+        if csv_row:
+            rows.append(csv_row)
+
+    save_results_csv(role, rows, getattr(args, "output_dir", None))
 
 
 if __name__ == "__main__":
     available_roles = list_available_roles()
     parser = argparse.ArgumentParser(
-        description="Score a resume against a role's rubric."
+        description="Generate a scoring role from a JD, or score a resume against an existing role."
     )
     parser.add_argument(
         "pdf_path", nargs="?", help="Path to the resume PDF to evaluate"
@@ -386,6 +444,31 @@ if __name__ == "__main__":
         "--role",
         help="Role to score against (a directory name under roles/). "
         + (f"Available: {', '.join(available_roles)}" if available_roles else ""),
+    )
+    parser.add_argument(
+        "--jd",
+        metavar="JD_FILE",
+        help="Path to a natural-language job description text file. Generates a "
+        "new role under roles/ and exits WITHOUT scoring any resume. Mutually "
+        "exclusive with pdf_path and --role.",
+    )
+    parser.add_argument(
+        "--role-key",
+        metavar="NAME",
+        help="Optional safe name for the role generated from --jd (e.g. "
+        "mechanical_design_intern -> roles/mechanical_design_intern/).",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="With --jd: regenerate the role even if the target directory "
+        "already exists.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        metavar="DIR",
+        help="Directory for result CSVs. Defaults to ../results (a sibling "
+        "of this project). The directory is created if missing.",
     )
     parser.add_argument(
         "--init-role",
@@ -407,9 +490,22 @@ if __name__ == "__main__":
         print(f"   python score.py <pdf_path> --role {args.init_role}")
         exit(0)
 
-    # Scoring mode: both pdf_path and --role are required.
+    # Step 1 — role generation from a JD. Exclusive; no pdf_path allowed.
+    if args.jd:
+        if args.pdf_path:
+            parser.error("conflicting arguments: pdf_path and --jd cannot be used together")
+        if args.role:
+            parser.error("conflicting arguments: --role and --jd cannot be used together")
+        try:
+            run_role_generation(args)
+        except (FileNotFoundError, ValueError, RuntimeError) as e:
+            print(f"Error: {e}")
+            exit(1)
+        exit(0)
+
+    # Step 2 — resume scoring against an already-existing role.
     if not args.pdf_path or not args.role:
-        parser.error("pdf_path and --role are required (or use --init-role NAME)")
+        parser.error("pdf_path and --role are required (or use --jd to generate a role)")
 
     if not os.path.exists(args.pdf_path):
         print(f"Error: '{args.pdf_path}' does not exist.")
@@ -421,20 +517,4 @@ if __name__ == "__main__":
         print(f"Error: {e}")
         exit(1)
 
-    # Batch mode: pdf_path is a directory — process every .pdf inside it.
-    if os.path.isdir(args.pdf_path):
-        pdf_files = sorted(Path(args.pdf_path).glob("*.pdf"))
-        if not pdf_files:
-            print(f"❌ 目录中没有 PDF 文件：{args.pdf_path}")
-            exit(1)
-        print(f"📂 找到 {len(pdf_files)} 份简历，开始批量处理...")
-        summaries = []
-        for i, pdf_file in enumerate(pdf_files, 1):
-            print(f"\n{'=' * 70}")
-            print(f"📄 进度（{i}/{len(pdf_files)}）：{pdf_file.name}")
-            summary = main(str(pdf_file), role)
-            if summary:
-                summaries.append(summary)
-        print_summary_table(summaries, role)
-    else:
-        main(args.pdf_path, role)
+    run_scoring(args, role)

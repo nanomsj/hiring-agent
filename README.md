@@ -234,12 +234,13 @@ You can leave it on during iteration. See the next section for details.
 <summary><b>4) Output and CSV export</b></summary>
 
 - `score.py` prints a readable summary to stdout, with a one-line progress marker
-  at the start of each stage (PDF read, resume extraction, scoring, CSV write) so
+  at the start of each stage (PDF read, resume extraction, scoring, CSV export) so
   the terminal shows the pipeline is still alive.
-- When `DEVELOPMENT_MODE=True` it creates or appends a per-role
-  `resume_evaluations_<role>.csv` with key fields (columns follow the role's
+- When `DEVELOPMENT_MODE=True` it writes all scoring rows to one **timestamped**
+  CSV per run (name `<role>_<YYYYMMDD_HHMMSS>.csv`, columns follow the role's
   categories; headers are in Chinese and the file is UTF-8 with BOM so Excel
-  renders them correctly), and caches intermediate JSON under `cache/`.
+  renders them correctly). See [Result CSV output directory](#result-csv-output-directory).
+  Intermediate extraction JSON is cached under `cache/`.
 - When a folder of PDFs is processed, `score.py` also prints an overall summary
   table after the batch run.
 
@@ -261,7 +262,7 @@ $ python score.py ./resume/sample.pdf --role software_engineering_intern
 What happens:
 
 1. If development mode is on, the PDF extraction result is cached to `cache/resumecache_<basename>.json`.
-2. The evaluator scores the resume against the selected role, prints a report and, in development mode, appends a CSV row to `resume_evaluations_<role>.csv`.
+2. The evaluator scores the resume against the selected role, prints a report and writes the scoring rows to a timestamped CSV in the result directory (see below).
 
 ### Batch scoring a folder
 
@@ -272,9 +273,73 @@ in one run. After the last resume, an overall summary table is printed.
 $ python score.py ./resumes/ --role software_engineering_intern
 ```
 
-Each resume is processed individually (cache, evaluation, CSV append), and a
-progress marker (`3/12 …`) is printed before every file so you can tell how far
-along the batch is.
+Each resume is processed individually (cache, evaluation), results are collected
+into a single timestamped CSV, and a progress marker (`3/12 …`) is printed before
+every file so you can tell how far along the batch is.
+
+### Generating a scoring role from a natural-language JD
+
+Instead of hand-writing a role, pass a plain-text job description with `--jd`.
+The configured LLM converts the JD into a fully-validated role saved under
+`roles/`, then the command **exits** — it does not score any resume:
+
+```bash
+$ python score.py --jd "..\jd\jd_mechanical_design.txt" --role-key mechanical_design_intern
+```
+
+What happens:
+
+1. The JD is read from the file (UTF-8 plain text: responsibilities,
+   must-have / nice-to-have skills, bonus/deduction signals, …).
+2. The configured LLM (``DEFAULT_MODEL`` in `.env`) extracts categories with
+   integer weights that are validated and normalized to sum to **100**, plus
+   must-have / nice-to-have lists, bonus rules, bonus max, and deduction rules.
+3. A compatible role — `role.json`, `criteria.jinja`, `system_message.jinja` —
+   is written under `roles/mechanical_design_intern/` and its path is printed.
+4. If a role already exists at that directory it is **not** overwritten: pass
+   `--force` to regenerate. (A role previously generated from the identical JD
+   content is reused as-is.)
+
+Then score resumes against the generated role in a **separate** command:
+
+```bash
+$ python score.py "..\resumes" --role mechanical_design_intern
+```
+
+`--jd` is exclusive: it cannot be combined with `pdf_path` or `--role`.
+
+### Result CSV output directory
+
+Scoring results (both single and batch) are written to a **timestamped** CSV so
+runs never overwrite each other:
+
+```text
+<role>_<YYYYMMDD_HHMMSS>.csv
+```
+
+By default they go to `../results` — a sibling of the project — which is created
+automatically if missing. This keeps generated files out of the source tree:
+
+```text
+xingbodongli/
+├── hiring-agent/    # program source
+├── jd/              # job descriptions
+├── resumes/         # resumes
+└── results/         # scoring CSVs  <-- timestamped result files land here
+```
+
+The full path is printed after scoring, e.g.:
+
+```text
+Results saved to:
+D:\a-msj\shixi\xingbodongli\results\mechanical_design_intern_20260810_175200.csv
+```
+
+To send results somewhere else, pass `--output-dir`:
+
+```bash
+$ python score.py "..\resumes" --role mechanical_design_intern --output-dir "D:\temp\results"
+```
 
 ### Roles
 
@@ -312,6 +377,7 @@ role directory instead.
 ├── .python-version
 ├── config.py
 ├── evaluator.py
+├── jd_role.py
 ├── llm_utils.py
 ├── models.py
 ├── pdf.py
